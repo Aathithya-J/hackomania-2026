@@ -21,7 +21,7 @@ import soundfile as sf
 import torch
 
 # ── Config — change API_URL to your ngrok URL or local IP ─────────────────────
-API_URL     = "http://YOUR_PC_IP_OR_NGROK_URL:8000"   # e.g. https://abc123.ngrok-free.app
+API_URL     = "https://glumly-unpredatory-sima.ngrok-free.dev"   # e.g. https://abc123.ngrok-free.app
 ENDPOINT    = "/transcribe"                            # or "/translate"
 SAMPLE_RATE = 16000                                    # Hz — required by MERaLiON
 
