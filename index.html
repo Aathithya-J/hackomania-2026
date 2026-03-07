@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>SENTINEL — Emergency Call Intelligence</title>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;400;600;700;900&family=Barlow:wght@300;400;500&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --bg:#080b0f; --bg2:#0d1117; --bg3:#111820; --bg4:#0a1018;
+  --border:#1e2d3d; --border2:#243447;
+  --text:#c9d8e8; --text-dim:#5a7a95; --text-muted:#2e4a62;
+  --accent:#00d4ff; --accent2:#0099cc;
+  --urgent:#ff3b3b; --urgent-bg:rgba(255,59,59,0.08); --urgent-glow:rgba(255,59,59,0.25);
+  --uncertain:#ff8c00; --uncertain-bg:rgba(255,140,0,0.08);
+  --ok:#00c87a; --ok-bg:rgba(0,200,122,0.08);
+  --mono:'Share Tech Mono',monospace;
+  --display:'Barlow Condensed',sans-serif;
+  --body:'Barlow',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--body);font-size:13px;line-height:1.5;height:100vh;overflow:hidden}
+body::before{content:'';position:fixed;inset:0;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.025) 2px,rgba(0,0,0,0.025) 4px);pointer-events:none;z-index:9999}
+
+/* TOPBAR */
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:48px;background:var(--bg2);border-bottom:1px solid var(--border);position:relative;z-index:100}
+.topbar-left{display:flex;align-items:center;gap:14px}
+.logo{font-family:var(--display);font-weight:900;font-size:20px;letter-spacing:4px;color:var(--accent);text-shadow:0 0 18px rgba(0,212,255,0.35)}
+.logo-sub{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:2px}
+.divider-v{width:1px;height:26px;background:var(--border)}
+.sys-pill{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:var(--ok);letter-spacing:1px}
+.s-dot{width:5px;height:5px;border-radius:50%;background:var(--ok);animation:pg 2s infinite}
+@keyframes pg{0%,100%{box-shadow:0 0 0 0 rgba(0,200,122,0.5)}50%{box-shadow:0 0 0 4px rgba(0,200,122,0)}}
+.topbar-right{display:flex;align-items:center;gap:12px}
+.clock{font-family:var(--mono);font-size:13px;letter-spacing:2px}
+.opr-badge{font-family:var(--mono);font-size:9px;color:var(--text-muted);border:1px solid var(--border2);padding:3px 8px;border-radius:2px}
+
+/* LAYOUT */
+.app{display:flex;height:calc(100vh - 48px)}
+
+/* CALL WORKSPACE */
+.call-workspace{flex:1;display:flex;flex-direction:column;overflow:hidden}
+
+/* CALL HEADER */
+.call-header{padding:12px 18px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.ch-left{display:flex;align-items:center;gap:12px}
+.caller-big{font-family:var(--display);font-weight:900;font-size:24px;letter-spacing:1px}
+.call-meta-row{display:flex;gap:10px;align-items:center;margin-top:2px}
+.cm-tag{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:1px}
+.live-pill{display:flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:var(--urgent);letter-spacing:2px;background:var(--urgent-bg);border:1px solid rgba(255,59,59,0.2);padding:3px 8px;border-radius:2px}
+.l-dot{width:6px;height:6px;border-radius:50%;background:var(--urgent);animation:blink 1s infinite}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.2}}
+.call-kpis{display:flex;gap:0}
+.kpi{padding:6px 14px;border-left:1px solid var(--border);text-align:center}
+.kpi-label{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:1px}
+.kpi-val{font-family:var(--display);font-weight:900;font-size:20px;line-height:1.1}
+.kpi-val.blue{color:var(--accent)}
+
+/* WAVEFORM */
+.wave-row{padding:6px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;background:var(--bg4)}
+.wave-lbl{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:2px}
+canvas#wvc{flex:1;height:32px}
+
+/* MESSAGES */
+.msgs{flex:1;overflow-y:auto;padding:14px 18px;display:flex;flex-direction:column;gap:8px}
+.msgs::-webkit-scrollbar{width:3px}
+.msgs::-webkit-scrollbar-thumb{background:var(--border2)}
+
+.msg{display:flex;flex-direction:column;gap:3px;animation:fu 0.2s ease both}
+@keyframes fu{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.msg-caller{align-items:flex-start}
+.msg-operator{align-items:flex-end}
+.msg-system{align-items:center}
+.msg-ai-op{align-items:flex-end}
+
+.msg-meta{font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:0.5px}
+.bubble{max-width:78%;padding:10px 14px;border-radius:3px;font-size:13px;line-height:1.7;word-wrap:break-word;overflow-wrap:break-word;white-space:pre-wrap;min-width:0}
+.msg-caller .bubble{background:var(--bg3);border:1px solid var(--border2);border-left:3px solid var(--accent2)}
+.msg-operator .bubble{background:rgba(0,200,122,0.06);border:1px solid rgba(0,200,122,0.15);border-right:3px solid var(--ok)}
+.msg-ai-op .bubble{background:rgba(0,212,255,0.05);border:1px solid rgba(0,212,255,0.15);border-right:3px solid var(--accent);max-width:92%;width:92%}
+.msg-system .bubble{background:transparent;border:none;font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:1px}
+.bubble .kw{background:rgba(255,59,59,0.14);color:#ff6b6b;padding:1px 4px;border-radius:2px;border:1px solid rgba(255,59,59,0.22)}
+.bubble .kw-w{background:rgba(255,140,0,0.1);color:#ffb347;padding:1px 4px;border-radius:2px;border:1px solid rgba(255,140,0,0.18)}
+
+/* Streaming cursor */
+.stream-cursor::after{content:'▋';animation:curblink 0.6s infinite;color:var(--accent);font-size:12px}
+@keyframes curblink{0%,100%{opacity:1}50%{opacity:0}}
+
+.think-bubble{display:inline-flex;align-items:center;gap:8px;background:var(--bg3);border:1px solid var(--border2);padding:7px 12px;border-radius:3px;font-family:var(--mono);font-size:9px;color:var(--text-muted)}
+.t-dots{display:flex;gap:3px}
+.t-dots span{width:4px;height:4px;border-radius:50%;background:var(--accent2);animation:td 1.2s infinite}
+.t-dots span:nth-child(2){animation-delay:0.2s}.t-dots span:nth-child(3){animation-delay:0.4s}
+@keyframes td{0%,60%,100%{transform:scale(0.7);opacity:0.3}30%{transform:scale(1.2);opacity:1}}
+
+/* INPUT */
+.input-area{padding:10px 18px;border-top:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.mode-toggle{display:flex;border:1px solid var(--border2);border-radius:2px;overflow:hidden;margin-bottom:8px;width:fit-content}
+.m-btn{padding:5px 14px;font-family:var(--mono);font-size:9px;letter-spacing:1px;background:transparent;border:none;color:var(--text-muted);cursor:pointer;transition:all 0.12s}
+.m-btn.active{background:rgba(0,212,255,0.1);color:var(--accent)}
+.input-row{display:flex;gap:8px;align-items:flex-end}
+.msg-ta{flex:1;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:9px 12px;font-family:var(--body);font-size:13px;border-radius:2px;outline:none;resize:none;min-height:40px;max-height:100px;line-height:1.5;transition:border-color 0.12s}
+.msg-ta:focus{border-color:var(--accent2)}
+.msg-ta::placeholder{color:var(--text-muted)}
+.send-btn{padding:9px 16px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);color:var(--accent);font-family:var(--mono);font-size:10px;letter-spacing:1px;cursor:pointer;border-radius:2px;transition:all 0.12s;align-self:flex-end;white-space:nowrap}
+.send-btn:hover:not(:disabled){background:rgba(0,212,255,0.2)}
+.send-btn:disabled{opacity:0.4;cursor:not-allowed}
+
+/* RIGHT PANEL */
+.right-panel{width:300px;border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.rp-scroll{flex:1;overflow-y:auto}
+.rp-scroll::-webkit-scrollbar{width:3px}
+.rp-scroll::-webkit-scrollbar-thumb{background:var(--border2)}
+.rp-section{border-bottom:1px solid var(--border)}
+.rp-body{padding:10px 14px}
+.panel-hdr{padding:8px 14px;border-bottom:1px solid var(--border);background:var(--bg2);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.panel-ttl{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--text-dim)}
+.badge{font-family:var(--mono);font-size:9px;padding:2px 6px;border-radius:2px;border:1px solid}
+.badge-a{background:rgba(0,212,255,0.08);color:var(--accent);border-color:rgba(0,212,255,0.2)}
+
+.gauge-wrap{display:flex;justify-content:center;padding:10px 0 4px}
+.ai-sum{font-size:12px;color:var(--text);line-height:1.7;border-left:2px solid var(--accent2);padding-left:8px}
+.ai-note{margin-top:7px;font-size:10px;font-family:var(--mono);color:var(--accent2);padding:5px 8px;background:rgba(0,153,204,0.07);border-left:2px solid var(--accent2);line-height:1.5}
+.kw-wrap{display:flex;flex-wrap:wrap;gap:5px}
+.kw-tag{font-family:var(--mono);font-size:9px;padding:2px 7px;border-radius:2px;border:1px solid}
+.kw-tag.red{background:var(--urgent-bg);color:var(--urgent);border-color:rgba(255,59,59,0.3)}
+.kw-tag.orange{background:var(--uncertain-bg);color:var(--uncertain);border-color:rgba(255,140,0,0.3)}
+.kw-tag.blue{background:rgba(0,212,255,0.08);color:var(--accent);border-color:rgba(0,212,255,0.2)}
+
+.q-list{display:flex;flex-direction:column;gap:5px}
+.q-item-r{font-size:11px;color:var(--text);padding:7px 9px;background:var(--bg3);border:1px solid var(--border);border-radius:2px;border-left:2px solid var(--accent2);cursor:pointer;transition:all 0.12s;line-height:1.4}
+.q-item-r:hover{border-left-color:var(--accent);color:var(--accent);background:var(--bg2)}
+.q-num{font-family:var(--mono);font-size:8px;color:var(--text-muted);margin-bottom:2px}
+
+/* DISPATCH */
+.dispatch-panel{border-top:1px solid var(--border);background:var(--bg2);padding:12px 14px;flex-shrink:0}
+.dp-hdr{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:3px;color:var(--text-dim);text-transform:uppercase;margin-bottom:10px}
+.dp-card{border:1px solid var(--border2);border-radius:2px;padding:10px;margin-bottom:8px;transition:all 0.3s}
+.conf-row{display:flex;align-items:center;gap:7px}
+.conf-lbl{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:1px}
+.conf-bar-w{flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.conf-bar{height:100%;border-radius:2px;background:var(--accent);transition:width 1s}
+.conf-pct{font-family:var(--mono);font-size:9px;color:var(--accent);min-width:28px;text-align:right}
+.dp-btn{width:100%;padding:10px;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;border:none;border-radius:2px;transition:all 0.12s}
+.dp-btn:disabled{opacity:0.4;cursor:not-allowed;background:var(--bg3);color:var(--text-muted);border:1px solid var(--border2)}
+
+/* ALERT BANNER */
+.alert-banner{position:fixed;top:48px;left:0;right:0;z-index:300;padding:9px 18px;background:var(--urgent);color:white;font-family:var(--display);font-weight:700;font-size:13px;letter-spacing:2px;display:flex;align-items:center;justify-content:center;gap:12px;animation:sd 0.3s ease}
+@keyframes sd{from{transform:translateY(-100%)}to{transform:translateY(0)}}
+.ac{cursor:pointer;opacity:0.8;font-size:15px}
+
+/* SETUP MODAL */
+.setup-overlay{position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:500;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px)}
+.setup-card{background:var(--bg2);border:1px solid var(--border2);border-top:3px solid var(--accent);padding:28px;width:420px;border-radius:4px}
+.setup-title{font-family:var(--display);font-weight:900;font-size:22px;letter-spacing:4px;color:var(--accent);margin-bottom:4px}
+.setup-sub{font-family:var(--mono);font-size:9px;color:var(--text-dim);letter-spacing:1px;margin-bottom:20px;line-height:1.7}
+.f-label{font-family:var(--mono);font-size:8px;color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;margin-bottom:4px;margin-top:10px}
+.f-input{width:100%;background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:9px 12px;font-family:var(--mono);font-size:12px;border-radius:2px;outline:none}
+.f-input:focus{border-color:var(--accent2)}
+.f-row{display:flex;gap:8px}
+.f-row .f-input:first-child{flex:1}
+.f-row .f-input:last-child{width:110px}
+.setup-btn{width:100%;margin-top:16px;padding:11px;background:rgba(0,212,255,0.1);border:1px solid rgba(0,212,255,0.3);color:var(--accent);font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:3px;cursor:pointer;border-radius:2px;transition:all 0.15s}
+.setup-btn:hover{background:rgba(0,212,255,0.2)}
+</style>
+</head>
+<body>
+
+<!-- SETUP MODAL -->
+<div class="setup-overlay" id="setupOverlay">
+  <div class="setup-card">
+    <div class="setup-title">SENTINEL</div>
+    <div class="setup-sub">EMERGENCY CALL INTELLIGENCE SYSTEM<br>Operator Dashboard · Gemini 2.0 Flash</div>
+    <div class="f-label">Caller Details</div>
+    <div class="f-row">
+      <input class="f-input" id="setupName" placeholder="Caller name (e.g. Mrs. Tan, 78)"/>
+      <input class="f-input" id="setupLang" placeholder="Language"/>
+    </div>
+    <div class="f-label">Your Name / Operator ID</div>
+    <input class="f-input" id="setupOpr" placeholder="Operator name (e.g. OPR-Mei Ling)"/>
+    <button class="setup-btn" onclick="openCall()">▶ OPEN CALL + ENTER DASHBOARD</button>
+  </div>
+</div>
+
+<!-- ALERT BANNER -->
+<div id="alertBanner" style="display:none" class="alert-banner">
+  <span id="alertText"></span>
+  <span class="ac" onclick="this.parentElement.style.display='none'">✕</span>
+</div>
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-left">
+    <div>
+      <div class="logo">SENTINEL</div>
+      <div class="logo-sub">EMERGENCY CALL INTELLIGENCE</div>
+    </div>
+    <div class="divider-v"></div>
+    <div class="sys-pill"><div class="s-dot"></div><span>SYSTEM ONLINE</span></div>
+    <div class="divider-v"></div>
+    <div id="pacsTopBadge" style="display:none"></div>
+  </div>
+  <div class="topbar-right">
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="opr-badge" id="oprBadge">OPR-002 · SGP</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app" id="appBody">
+
+  <!-- CALL WORKSPACE -->
+  <div class="call-workspace">
+    <div class="call-header">
+      <div class="ch-left">
+        <div>
+          <div class="caller-big" id="callerBig">—</div>
+          <div class="call-meta-row">
+            <span class="cm-tag" id="callIdTag">—</span>
+            <span class="cm-tag">·</span>
+            <span class="cm-tag" id="callLangTag">—</span>
+            <span class="cm-tag">·</span>
+            <div class="live-pill"><div class="l-dot"></div>LIVE</div>
+          </div>
+        </div>
+        <div id="urgBadgeWrap"></div>
+      </div>
+      <div class="call-kpis">
+        <div class="kpi">
+          <div class="kpi-label">RISK</div>
+          <div class="kpi-val" id="kpiRisk" style="color:var(--text-muted)">—</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">DURATION</div>
+          <div class="kpi-val blue" id="kpiDur">0:00</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">MSGS</div>
+          <div class="kpi-val blue" id="kpiMsgs">0</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-label">EMOTION</div>
+          <div class="kpi-val" id="kpiEmo" style="color:var(--text-muted);font-size:13px">—</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="wave-row">
+      <span class="wave-lbl">AUDIO STREAM</span>
+      <canvas id="wvc"></canvas>
+    </div>
+
+    <div class="msgs" id="callMsgs">
+      <div style="text-align:center;padding:40px">
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-muted);letter-spacing:2px;line-height:2.2">CALL ACTIVE<br>TYPE CALLER INPUT BELOW — AI OPERATOR RESPONDS AUTOMATICALLY</div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <div class="mode-toggle">
+        <button class="m-btn active" id="mBtnCaller" onclick="setMode('caller')">📞 CALLER</button>
+        <button class="m-btn" id="mBtnOpr" onclick="setMode('operator')">🎧 MANUAL OPERATOR</button>
+      </div>
+      <div class="input-row">
+        <textarea class="msg-ta" id="msgInput" rows="1"
+          placeholder="Type caller's words here... Enter to send"
+          onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" id="sendBtn" onclick="sendMsg()">SEND ↵</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RIGHT TRIAGE PANEL -->
+  <div class="right-panel">
+    <div class="panel-hdr">
+      <span class="panel-ttl">AI Triage · Gemini</span>
+      <span class="badge badge-a" id="aiStatusBadge">STANDBY</span>
+    </div>
+    <div class="rp-scroll">
+      <div class="rp-section">
+        <div class="gauge-wrap">
+          <svg width="140" height="85">
+            <path d="M 18 76 A 52 52 0 0 1 122 76" fill="none" stroke="#1e2d3d" stroke-width="8" stroke-linecap="round"/>
+            <path id="gaugeArc" d="M 18 76 A 52 52 0 0 1 122 76" fill="none" stroke="#2e4a62" stroke-width="8" stroke-linecap="round" stroke-dasharray="0 163" style="transition:stroke-dasharray 1s,stroke 0.5s"/>
+            <text id="gaugeNum" x="70" y="68" fill="#2e4a62" font-family="'Barlow Condensed'" font-weight="900" font-size="30" text-anchor="middle">—</text>
+            <text x="70" y="79" fill="#2e4a62" font-family="'Share Tech Mono'" font-size="7" text-anchor="middle" letter-spacing="2">RISK</text>
+          </svg>
+        </div>
+      </div>
+      <div class="rp-section">
+        <div class="panel-hdr"><span class="panel-ttl">Situation Summary</span></div>
+        <div class="rp-body"><div id="aiSum" style="font-family:var(--mono);font-size:9px;color:var(--text-muted)">Awaiting call data...</div></div>
+      </div>
+      <div class="rp-section">
+        <div class="panel-hdr"><span class="panel-ttl">Keywords</span></div>
+        <div class="rp-body"><div class="kw-wrap" id="kwWrap"><span style="font-family:var(--mono);font-size:9px;color:var(--text-muted)">—</span></div></div>
+      </div>
+      <div class="rp-section">
+        <div class="panel-hdr"><span class="panel-ttl">Suggested Questions</span></div>
+        <div class="rp-body"><div class="q-list" id="qList"><span style="font-family:var(--mono);font-size:9px;color:var(--text-muted)">—</span></div></div>
+      </div>
+    </div>
+    <div class="dispatch-panel">
+      <div class="dp-hdr">Dispatch</div>
+      <div class="dp-card" id="dpCard"><div style="font-size:11px;color:var(--text-muted)">Awaiting triage...</div></div>
+      <button class="dp-btn" id="dpBtn" disabled>CONFIRM DISPATCH</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// CONFIG
+const GEMINI_MODEL = 'gemini-3-flash-preview';
+const GEMINI_API_KEY = 'AIzaSyDHswRns19vHtqv34IkaIKVAQRNDEZKAec';
+const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+const GEMINI_STREAM_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:streamGenerateContent?alt=sse&key=${GEMINI_API_KEY}`;
+
+// STATE
+let callerName = '', callerLang = '', callId = '', operatorName = '';
+let inputMode = 'caller';
+let msgHistory = [];
+let msgCount = 0, resolvedCount = 0;
+let callDuration = 0, callTimer = null, waveFrame = null;
+let debounce = null, isAnalyzing = false, sessionActive = false;
+let lastTriageResult = null;
+
+// CLOCK
+setInterval(() => {
+  document.getElementById('clock').textContent =
+    new Date().toLocaleTimeString('en-SG', { hour12: false });
+}, 1000);
+
+// SETUP
+function openCall() {
+  const name = document.getElementById('setupName').value.trim() || 'Unknown Caller';
+  const lang = document.getElementById('setupLang').value.trim() || 'English';
+  const opr  = document.getElementById('setupOpr').value.trim() || 'OPR-002';
+
+  callerName = name; callerLang = lang; operatorName = opr;
+  callId = 'CID-' + Date.now().toString().slice(-4);
+  sessionActive = true;
+
+  document.getElementById('setupOverlay').style.display = 'none';
+  document.getElementById('oprBadge').textContent = opr + ' · SGP';
+
+  startWaveform();
+  initCallView();
+}
+
+function initCallView() {
+  document.getElementById('callerBig').textContent = callerName;
+  document.getElementById('callIdTag').textContent = callId;
+  document.getElementById('callLangTag').textContent = callerLang;
+  document.getElementById('callMsgs').innerHTML = '';
+  addSysMsg('Call connected · ' + callerName + ' · ' + callerLang);
+  addSysMsg('AI Operator (Gemini 2.0 Flash) is active and will respond automatically');
+
+  if (callTimer) clearInterval(callTimer);
+  callDuration = 0;
+  callTimer = setInterval(() => {
+    callDuration++;
+    const m = Math.floor(callDuration / 60), s = callDuration % 60;
+    document.getElementById('kpiDur').textContent = `${m}:${s.toString().padStart(2,'0')}`;
+  }, 1000);
+}
+
+// INPUT
+function setMode(mode) {
+  inputMode = mode;
+  document.getElementById('mBtnCaller').classList.toggle('active', mode === 'caller');
+  document.getElementById('mBtnOpr').classList.toggle('active', mode === 'operator');
+  const ta = document.getElementById('msgInput');
+  ta.placeholder = mode === 'caller'
+    ? "Type caller's words... Enter to send (AI operator will respond)"
+    : "Type manual operator response... Enter to send";
+  ta.focus();
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+}
+
+function autoResize(ta) {
+  ta.style.height = 'auto';
+  ta.style.height = Math.min(ta.scrollHeight, 100) + 'px';
+}
+
+// SEND MESSAGE
+function sendMsg() {
+  if (!sessionActive) return;
+  const ta = document.getElementById('msgInput');
+  const text = ta.value.trim();
+  if (!text) return;
+  ta.value = ''; ta.style.height = 'auto';
+
+  const ts = new Date().toLocaleTimeString('en-SG', { hour12: false });
+  msgHistory.push({ role: inputMode, text, ts });
+  msgCount++;
+  document.getElementById('kpiMsgs').textContent = msgCount;
+
+  renderMsg(inputMode, text, ts);
+
+  if (inputMode === 'caller') {
+    triggerOperatorReplyStream();
+    triggerTriage();
+  }
+}
+
+function renderMsg(role, text, ts, isAI = false) {
+  const container = document.getElementById('callMsgs');
+  const d = document.createElement('div');
+  d.className = `msg ${isAI ? 'msg-ai-op' : 'msg-' + role}`;
+  const icon = isAI ? '🤖 AI OPERATOR' : role === 'caller' ? '📞 CALLER' : '🎧 OPERATOR';
+  // Only highlight keywords in caller messages, not operator responses
+  const displayText = role === 'caller' ? highlightKw(text) : text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  d.innerHTML = `<div class="msg-meta">${icon} · ${ts}</div><div class="bubble">${displayText}</div>`;
+  container.appendChild(d);
+  container.scrollTop = container.scrollHeight;
+  return d;
+}
+
+function addSysMsg(text) {
+  const d = document.createElement('div');
+  d.className = 'msg msg-system';
+  d.innerHTML = `<div class="bubble">— ${text} —</div>`;
+  document.getElementById('callMsgs').appendChild(d);
+}
+
+// AI OPERATOR REPLY — NON-STREAMING (reliable full responses)
+async function triggerOperatorReplyStream() {
+  const ta = document.getElementById('msgInput');
+  ta.disabled = true;
+  document.getElementById('sendBtn').disabled = true;
+
+  // Show typing indicator
+  const typing = document.createElement('div');
+  typing.id = 'typingBubble';
+  typing.className = 'msg msg-ai-op';
+  typing.innerHTML = `<div class="msg-meta">🤖 AI OPERATOR</div><div class="think-bubble"><span style="color:var(--accent2)">COMPOSING RESPONSE</span><div class="t-dots"><span></span><span></span><span></span></div></div>`;
+  document.getElementById('callMsgs').appendChild(typing);
+  document.getElementById('callMsgs').scrollTop = 99999;
+
+  const transcript = msgHistory.map(m => `[${m.role.toUpperCase()}]: ${m.text}`).join('\n');
+  const pacsCtx = lastTriageResult
+    ? `Current PACS: ${lastTriageResult.pacs_level||'pending'} — ${lastTriageResult.pacs_label||''}. Dispatch: ${lastTriageResult.dispatch_type||'pending'}.`
+    : 'Triage pending.';
+
+  const prompt = `You are a trained emergency hotline operator at Singapore's SCDF senior alert centre.
+
+TRIAGE STATUS: ${pacsCtx}
+Caller: ${callerName} | Language: ${callerLang}
+
+Conversation:
+${transcript}
+
+YOUR TASK: Respond as the operator with a COMPLETE full response. Write 3-5 full sentences. You MUST finish every sentence completely — never stop mid-sentence.
+- If PACS P1+/P1: Tell them help is dispatched, give life-safety instructions (stay still, breathe slowly, stay on line)
+- If PACS P2: Confirm help is coming, ask one key clinical question, reassure them
+- If PACS P3: Reassure warmly, ask about their mobility and pain level, advise a responder is coming
+- If PACS P4: Confirm their welfare, check if accidental press, close the call warmly
+- Speak in ${callerLang} if caller used non-English
+- NEVER mention PACS codes to the caller
+- Output ONLY the operator's spoken words. No labels. No JSON. Complete sentences only. Do NOT stop mid-sentence.`;
+
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.4, maxOutputTokens: 1024 }
+      })
+    });
+
+    const data = await res.json();
+    console.log('[SENTINEL] operator reply:', JSON.stringify(data).substring(0, 600));
+    if (data.error) throw new Error(data.error.message);
+
+    const fullText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+      || 'Help is on the way. Please stay calm and keep the line open.';
+
+    console.log('[SENTINEL] operator fullText length:', fullText.length, fullText);
+
+    document.getElementById('typingBubble')?.remove();
+
+    const ts = new Date().toLocaleTimeString('en-SG', { hour12: false });
+    const container = document.getElementById('callMsgs');
+    const msgEl = document.createElement('div');
+    msgEl.className = 'msg msg-ai-op';
+    const bubbleEl = document.createElement('div');
+    bubbleEl.className = 'bubble';
+    bubbleEl.innerHTML = highlightKw(fullText);
+    msgEl.innerHTML = `<div class="msg-meta">🤖 AI OPERATOR · ${ts}</div>`;
+    msgEl.appendChild(bubbleEl);
+    container.appendChild(msgEl);
+    container.scrollTop = container.scrollHeight;
+
+    msgHistory.push({ role: 'operator', text: fullText, ts });
+    msgCount++;
+    document.getElementById('kpiMsgs').textContent = msgCount;
+
+  } catch (err) {
+    console.error('[SENTINEL] Operator reply error:', err);
+    document.getElementById('typingBubble')?.remove();
+    const ts = new Date().toLocaleTimeString('en-SG', { hour12: false });
+    renderMsg('operator', 'I hear you. Help is being arranged. Please stay on the line.', ts, true);
+  }
+  ta.disabled = false;
+  document.getElementById('sendBtn').disabled = false;
+  ta.focus();
+}
+
+// TRIAGE
+function triggerTriage() {
+  if (debounce) clearTimeout(debounce);
+  debounce = setTimeout(runTriage, 800);
+}
+
+async function runTriage() {
+  if (isAnalyzing) return;
+  isAnalyzing = true;
+  document.getElementById('aiStatusBadge').textContent = '⟳ ANALYZING';
+
+  // Only use caller messages for triage — operator messages can skew analysis
+  const transcript = msgHistory
+    .filter(m => m.role === 'caller')
+    .map(m => `[CALLER]: ${m.text}`)
+    .join('\n');
+  const pacsGuide = `SINGAPORE PACS:
+P1+ Immediately Life-Threatening: cardiac arrest, no breathing, unresponsive. Fire bike + ambulance NOW.
+P1 Critical: Chest pain/cardiac, acute stroke, severe respiratory distress, unconscious but breathing. Ambulance priority.
+P2 Emergency: Cannot walk, moderate breathing difficulty, significant fall with injury, altered mental state. Ambulance within 15 min.
+P3 Semi-Urgent: Ambulant, mild-moderate symptoms, minor fracture, mild pain, dizziness. Community responder 30-60 min.
+P4 Non-Emergency: Chronic stable, accidental press, welfare check. GP or follow-up.`;
+
+  const prompt = `You are SENTINEL, an AI triage engine for Singapore's SCDF senior alert hotline.
+
+${pacsGuide}
+
+Caller: ${callerName}, Language: ${callerLang}
+Conversation:
+${transcript}
+
+Classify using PACS. Return ONLY valid JSON, no markdown, no backticks:
+{"pacs_level":"P1+"|"P1"|"P2"|"P3"|"P4","pacs_label":"Immediately Life-Threatening"|"Critical Emergency"|"Emergency"|"Ambulatory"|"Non-Emergency","risk_score":0-100,"detected_keywords":["exact words from transcript"],"emotion_state":"panicked"|"distressed"|"confused"|"calm"|"frightened"|"disoriented","ai_summary":"2-3 sentence clinical summary explaining why this PACS level was chosen","clinical_indicators":["symptom 1","symptom 2"],"recommended_action":"specific immediate SCDF action","response_time_target":"Immediate"|"Within 15 min"|"Within 30 min"|"Within 60 min"|"Non-urgent","confidence":0.0-1.0,"suggested_questions":["critical clinical question 1","question 2","question 3"],"dispatch_type":"Fire Bike + Ambulance (P1+)"|"Ambulance Priority (P1)"|"Ambulance (P2)"|"Community Responder (P3)"|"GP Referral / Follow-Up (P4)","operator_note":"one specific action the operator must take RIGHT NOW"}`;
+
+  try {
+    console.log('[TRIAGE] Sending request, transcript length:', transcript.length);
+    const res = await fetch(GEMINI_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.05, maxOutputTokens: 1000, topP: 0.8, topK: 10 }
+      })
+    });
+    const data = await res.json();
+    console.log('[TRIAGE] Raw response:', JSON.stringify(data).substring(0, 800));
+    if (data.error) throw new Error(data.error.message);
+    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    console.log('[TRIAGE] Raw text:', raw.substring(0, 500));
+    const cleaned = raw.replace(/```json|```/g,'').trim();
+    const result = JSON.parse(cleaned);
+    console.log('[TRIAGE] Parsed result:', result);
+    lastTriageResult = result;
+    renderTriage(result);
+  } catch (err) {
+    console.error('[TRIAGE] Error:', err);
+    document.getElementById('aiStatusBadge').textContent = 'ERROR';
+  } finally {
+    isAnalyzing = false;
+    if (document.getElementById('aiStatusBadge').textContent !== 'ERROR') {
+      document.getElementById('aiStatusBadge').textContent = 'READY';
+    }
+  }
+}
+
+const PACS_CONFIG = {
+  'P1+': { color: '#ff0000', bg: 'rgba(255,0,0,0.1)', border: 'rgba(255,0,0,0.35)', dc: 'urg', label: 'IMMEDIATELY LIFE-THREATENING' },
+  'P1':  { color: '#ff3b3b', bg: 'rgba(255,59,59,0.08)', border: 'rgba(255,59,59,0.3)', dc: 'urg', label: 'CRITICAL EMERGENCY' },
+  'P2':  { color: '#ff8c00', bg: 'rgba(255,140,0,0.08)', border: 'rgba(255,140,0,0.3)', dc: 'unc', label: 'EMERGENCY' },
+  'P3':  { color: '#f0c040', bg: 'rgba(240,192,64,0.08)', border: 'rgba(240,192,64,0.3)', dc: 'p3', label: 'AMBULATORY' },
+  'P4':  { color: '#00c87a', bg: 'rgba(0,200,122,0.08)', border: 'rgba(0,200,122,0.25)', dc: 'non', label: 'NON-EMERGENCY' },
+};
+
+function renderTriage(r) {
+  const pacs = r.pacs_level || 'P3';
+  const cfg = PACS_CONFIG[pacs] || PACS_CONFIG['P3'];
+  const score = r.risk_score ?? 0;
+  const conf = Math.round((r.confidence ?? 0.5) * 100);
+
+  document.getElementById('kpiRisk').textContent = score;
+  document.getElementById('kpiRisk').style.color = cfg.color;
+  document.getElementById('kpiEmo').textContent = (r.emotion_state || '—').toUpperCase();
+  document.getElementById('kpiEmo').style.color = cfg.color;
+
+  document.getElementById('urgBadgeWrap').innerHTML =
+    `<div style="background:${cfg.bg};color:${cfg.color};border:1px solid ${cfg.border};display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:2px;font-family:var(--display);font-weight:900;font-size:13px;letter-spacing:1px">
+      <span style="font-size:16px;font-weight:900">${pacs}</span>
+      <span style="font-size:10px;letter-spacing:2px;border-left:1px solid ${cfg.border};padding-left:8px">${cfg.label}</span>
+    </div>`;
+
+  // Top bar PACS badge
+  document.getElementById('pacsTopBadge').style.display = 'flex';
+  document.getElementById('pacsTopBadge').innerHTML =
+    `<div style="font-family:var(--mono);font-size:9px;color:${cfg.color};background:${cfg.bg};border:1px solid ${cfg.border};padding:3px 8px;border-radius:2px;letter-spacing:2px">${pacs} · ${r.response_time_target||'—'}</div>`;
+
+  const arc = document.getElementById('gaugeArc');
+  arc.setAttribute('stroke-dasharray', `${(score/100)*163} 163`);
+  arc.setAttribute('stroke', cfg.color);
+  const gn = document.getElementById('gaugeNum');
+  gn.textContent = score; gn.setAttribute('fill', cfg.color);
+
+  const rtColor = r.response_time_target === 'Immediate' ? '#ff0000' : r.response_time_target === 'Within 15 min' ? '#ff3b3b' : r.response_time_target === 'Within 30 min' ? '#ff8c00' : '#00c87a';
+  const rtHtml = r.response_time_target
+    ? `<div style="margin-top:8px;display:inline-flex;align-items:center;gap:5px;font-family:var(--mono);font-size:9px;color:${rtColor};background:rgba(0,0,0,0.2);border:1px solid ${rtColor}33;padding:3px 7px;border-radius:2px">⏱ ${r.response_time_target}</div>`
+    : '';
+  const ciHtml = (r.clinical_indicators?.length)
+    ? `<div style="margin-top:8px;font-family:var(--mono);font-size:9px;color:var(--text-dim)">INDICATORS: ${r.clinical_indicators.map(i=>`<span style="color:var(--accent2)">${i}</span>`).join(' · ')}</div>`
+    : '';
+
+  document.getElementById('aiSum').innerHTML =
+    `<div class="ai-sum">${r.ai_summary}</div>` +
+    rtHtml + ciHtml +
+    (r.operator_note ? `<div class="ai-note">⚡ ${r.operator_note}</div>` : '');
+
+  document.getElementById('kwWrap').innerHTML = (r.detected_keywords?.length)
+    ? r.detected_keywords.map(k => `<span class="kw-tag ${KW_MAP[k.toLowerCase()]||'blue'}">${k}</span>`).join('')
+    : '<span style="font-family:var(--mono);font-size:9px;color:var(--text-muted)">None detected</span>';
+
+  document.getElementById('qList').innerHTML = (r.suggested_questions?.length)
+    ? r.suggested_questions.map((q,i) =>
+        `<div class="q-item-r" onclick="useQ(this)"><div class="q-num">Q${i+1} · PACS ${pacs}</div>${q}</div>`).join('')
+    : '';
+
+  document.getElementById('dpCard').style.cssText = `border:1px solid ${cfg.border};border-radius:2px;padding:10px;margin-bottom:8px;background:${cfg.bg}`;
+  document.getElementById('dpCard').innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <span style="font-family:var(--display);font-weight:900;font-size:22px;color:${cfg.color}">${pacs}</span>
+      <div>
+        <div style="font-family:var(--display);font-weight:700;font-size:13px;color:${cfg.color}">${r.pacs_label||cfg.label}</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-dim)">${r.dispatch_type||'—'}</div>
+      </div>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;line-height:1.5">${r.recommended_action||'—'}</div>
+    <div class="conf-row">
+      <span class="conf-lbl">CONFIDENCE</span>
+      <div class="conf-bar-w"><div class="conf-bar" style="width:${conf}%;background:${cfg.color}"></div></div>
+      <span class="conf-pct" style="color:${cfg.color}">${conf}%</span>
+    </div>`;
+
+  const btn = document.getElementById('dpBtn');
+  btn.disabled = false;
+  btn.style.background = cfg.color;
+  btn.style.color = (pacs === 'P3' || pacs === 'P4') ? '#000' : 'white';
+  btn.style.border = 'none';
+  btn.textContent = `CONFIRM ${pacs} · ${(r.dispatch_type||'DISPATCH').split('(')[0].trim().toUpperCase()}`;
+  btn.onclick = () => {
+    btn.disabled = true;
+    btn.textContent = `✓ ${pacs} DISPATCHED`;
+    addSysMsg(`${pacs} Dispatch confirmed: ${r.dispatch_type}`);
+    resolvedCount++;
+  };
+
+  if (pacs === 'P1+' || pacs === 'P1') {
+    showAlert(`🚨 ${pacs} — ${r.pacs_label} · ${r.dispatch_type} · ${callerName}`);
+  } else if (pacs === 'P2') {
+    showAlert(`⚠ P2 EMERGENCY · ${r.dispatch_type} · ${callerName}`);
+  }
+}
+
+function useQ(el) {
+  const text = el.childNodes[1]?.textContent?.trim();
+  if (!text) return;
+  setMode('operator');
+  const ta = document.getElementById('msgInput');
+  ta.value = text; ta.focus(); autoResize(ta);
+}
+
+const KW_MAP = {
+  'chest pain':'red','chest':'red','cannot breathe':'red','breathing':'orange','heart':'red',
+  'bleeding':'red','unconscious':'red','stroke':'red','collapsed':'red','cardiac':'red',
+  'fall':'orange','fell':'orange','dizzy':'orange','faint':'orange','pain':'orange',
+  'hurt':'orange','injured':'orange','vomit':'orange','weak':'orange','confused':'orange',
+  'alone':'blue','help':'orange','scared':'orange','ambulance':'red','accidental':'blue',
+};
+
+function highlightKw(text) {
+  let out = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  for (const [k, c] of Object.entries(KW_MAP)) {
+    const rx = new RegExp(`\\b(${k})\\b`, 'gi');
+    out = out.replace(rx, c === 'red' ? '<span class="kw">$1</span>' : '<span class="kw-w">$1</span>');
+  }
+  return out;
+}
+
+function showAlert(msg) {
+  document.getElementById('alertText').textContent = msg;
+  document.getElementById('alertBanner').style.display = 'flex';
+}
+
+// WAVEFORM
+function startWaveform() {
+  const c = document.getElementById('wvc');
+  if (!c) return;
+  const ctx = c.getContext('2d');
+  c.width = c.offsetWidth || 700; c.height = 32;
+  let ph = 0;
+  function draw() {
+    ctx.clearRect(0,0,c.width,c.height);
+    ctx.strokeStyle='#00d4ff'; ctx.lineWidth=1.5; ctx.shadowBlur=4; ctx.shadowColor='#00d4ff22';
+    ctx.beginPath();
+    for(let x=0;x<c.width;x++){
+      const amp = sessionActive ? 8 + Math.random()*7 : 1.5;
+      const y = 16 + Math.sin(x*0.045+ph)*amp*Math.sin(x*0.013+ph*0.3);
+      x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.stroke(); ph+=0.1;
+    waveFrame = requestAnimationFrame(draw);
+  }
+  if(waveFrame) cancelAnimationFrame(waveFrame);
+  draw();
+}
+
+startWaveform();
+</script>
+</body>
+</html>
