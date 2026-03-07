@@ -1,0 +1,17 @@
+# ── Server (api.py / dialectDet.py) — install on the Windows PC ───────────────
+torch==2.6.0+cu124
+torchaudio==2.6.0+cu124
+transformers==4.48.0
+accelerate==0.33.0
+bitsandbytes==0.49.2
+datasets==2.20.0
+numpy==1.26.4
+soundfile==0.13.1
+librosa==0.10.2
+fastapi==0.135.1
+uvicorn==0.41.0
+python-multipart==0.0.22
+
+# ── Client (client.py) — install on the M1 Mac ────────────────────────────────
+# pip install torch torchaudio sounddevice soundfile numpy requests
+# Note: silero-vad is loaded automatically via torch.hub, no pip install needed
