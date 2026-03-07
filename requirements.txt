@@ -12,6 +12,10 @@ fastapi==0.135.1
 uvicorn==0.41.0
 python-multipart==0.0.22
 
+# ── Gateway (gateway.py / responder_dispatch.py / models.py) ──────────────────
+python-dotenv==1.0.1         # .env config loading
+# pydantic and fastapi/uvicorn already listed above under Server
+
 # ── Client (client.py) — install on the M1 Mac ────────────────────────────────
-# pip install torch torchaudio sounddevice soundfile numpy requests
+# pip install torch torchaudio sounddevice soundfile numpy requests python-dotenv
 # Note: silero-vad is loaded automatically via torch.hub, no pip install needed
