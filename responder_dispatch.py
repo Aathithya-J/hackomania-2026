@@ -33,7 +33,6 @@ logger = logging.getLogger("pab.dispatcher")
 
 # ── Config from .env ───────────────────────────────────────────────────────────
 RESPONDER_WEBHOOK_URL:  str = os.getenv("RESPONDER_WEBHOOK_URL", "")
-RESPONDER_API_TOKEN:    str = os.getenv("RESPONDER_API_TOKEN", "")
 WEBHOOK_SECRET:         str = os.getenv("WEBHOOK_SECRET", "")       # HMAC signing key
 
 RETRY_ATTEMPTS:         int   = int(os.getenv("RETRY_ATTEMPTS", "4"))
@@ -56,8 +55,6 @@ def _sign_payload(body: bytes, secret: str) -> str:
 
 def _build_headers(body: bytes) -> dict[str, str]:
     headers: dict[str, str] = {"Content-Type": "application/json"}
-    if RESPONDER_API_TOKEN:
-        headers["Authorization"] = f"Bearer {RESPONDER_API_TOKEN}"
     if WEBHOOK_SECRET:
         headers["X-PAB-Signature"] = _sign_payload(body, WEBHOOK_SECRET)
     return headers

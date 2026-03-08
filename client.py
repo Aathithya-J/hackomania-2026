@@ -1,171 +1,216 @@
 # ── Requirements ───────────────────────────────────────────────────────────────
-# Python 3.9+ (M1 Mac native arm64 recommended)
-# pip install sounddevice torch torchaudio requests soundfile numpy
+# pip install sounddevice soundfile numpy requests websockets torch torchaudio
 #
-# ffmpeg is NOT required — WAV is used throughout
-# Silero VAD model (~2MB) is auto-downloaded from torch hub on first run
-#
-# Tested on: Apple M1, macOS Ventura/Sonoma, Python 3.11 (arm64)
-# VAD runs on CPU — no GPU/MPS needed; uses ~50MB RAM
+# Flow:
+#   1. Press ENTER  → records ALERT_DURATION_S seconds of audio
+#   2. POSTs audio  → gateway transcribes + notifies responder
+#   3. Opens WS     → waits for responder to accept
+#   4. Live call    → streams mic to gateway (transcribed every 5s)
+#                     plays responder audio through speakers
 # ───────────────────────────────────────────────────────────────────────────────
 
-import collections
+from __future__ import annotations
+
+import asyncio
 import io
-import queue
+import json
+import sys
 import threading
+import uuid
 
 import numpy as np
 import requests
 import sounddevice as sd
 import soundfile as sf
-import torch
+import websockets
 
-# ── Config — change API_URL to your ngrok URL or local IP ─────────────────────
-API_URL     = "https://glumly-unpredatory-sima.ngrok-free.dev"   # e.g. https://abc123.ngrok-free.app
-ENDPOINT    = "/transcribe"                            # or "/translate"
-SAMPLE_RATE = 16000                                    # Hz — required by MERaLiON
-
-# ── VAD tuning ─────────────────────────────────────────────────────────────────
-CHUNK_SAMPLES      = 512    # Silero VAD window size (32 ms at 16 kHz) — do not change
-SPEECH_THRESHOLD   = 0.5    # VAD confidence threshold (0–1); raise to reduce false positives
-SILENCE_DURATION   = 0.8    # seconds of silence before utterance is considered done
-PRE_SPEECH_PAD     = 0.3    # seconds of audio kept before speech starts (avoids clipping)
-
-SILENCE_CHUNKS     = int(SILENCE_DURATION * SAMPLE_RATE / CHUNK_SAMPLES)
-PRE_SPEECH_CHUNKS  = int(PRE_SPEECH_PAD   * SAMPLE_RATE / CHUNK_SAMPLES)
-
-# ── Load Silero VAD ────────────────────────────────────────────────────────────
-print("Loading Silero VAD model...")
-vad_model, _ = torch.hub.load(
-    repo_or_dir="snakers4/silero-vad",
-    model="silero_vad",
-    force_reload=False,
-    onnx=False,
-)
-vad_model.eval()
-print("✓ VAD model ready\n")
-
-# ── Shared audio queue (callback → main thread) ────────────────────────────────
-audio_queue: queue.Queue = queue.Queue()
+# ── Config ─────────────────────────────────────────────────────────────────────
+GATEWAY_URL     = "https://unmetropolitan-lupita-urban.ngrok-free.dev"
+API_KEY         = "hamster67"
+SAMPLE_RATE     = 16000
+ALERT_DURATION  = 10       # seconds to record for the initial alert
+CHUNK_SAMPLES       = 512    # audio chunk size sent over WebSocket (32 ms)
+SILENCE_THRESHOLD   = 0.02   # RMS below this = silence, don't send (0.0 to disable)
 
 
-def audio_callback(indata: np.ndarray, frames: int, time, status):
-    """sounddevice callback — runs in a separate thread."""
-    if status:
-        print(f"[sounddevice] {status}")
-    # Queue a flat float32 copy of the incoming chunk
-    audio_queue.put(indata[:, 0].copy().astype(np.float32))
+# ── Audio helpers ──────────────────────────────────────────────────────────────
+
+def record_alert(duration_s: int = ALERT_DURATION) -> np.ndarray:
+    """Block and record `duration_s` seconds from the microphone."""
+    print(f"🔴  Recording {duration_s}s — speak now...")
+    audio = sd.rec(
+        int(duration_s * SAMPLE_RATE),
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype="float32",
+    )
+    for remaining in range(duration_s, 0, -1):
+        print(f"    {remaining}s remaining...", end="\r")
+        sd.sleep(1000)
+    sd.wait()
+    print("✅  Recording complete.                    ")
+    return audio[:, 0]
 
 
-def send_to_api(audio_array: np.ndarray):
-    """Convert audio to WAV bytes and POST to the transcription API."""
+def to_wav_bytes(audio: np.ndarray) -> bytes:
     buf = io.BytesIO()
-    sf.write(buf, audio_array, SAMPLE_RATE, format="WAV", subtype="PCM_16")
-    buf.seek(0)
-
-    try:
-        response = requests.post(
-            f"{API_URL}{ENDPOINT}",
-            files={"file": ("speech.wav", buf, "audio/wav")},
-            timeout=120,  # MERaLiON can be slow — give it time
-        )
-        if response.ok:
-            data = response.json()
-            # /transcribe returns {"transcription": "..."}
-            # /translate  returns {"result": "..."}
-            text = data.get("transcription") or data.get("result", "")
-            print(f"\n📝  {text}\n")
-        else:
-            print(f"\n[API error {response.status_code}]: {response.text}\n")
-    except requests.exceptions.ConnectionError:
-        print(f"\n[Connection failed] Is the server at {API_URL} reachable?\n")
-    except Exception as exc:
-        print(f"\n[Request error]: {exc}\n")
+    sf.write(buf, audio, SAMPLE_RATE, format="WAV", subtype="PCM_16")
+    return buf.getvalue()
 
 
-def process_audio():
-    """
-    Main VAD loop.
-    - Accumulates audio chunks from the queue
-    - Runs Silero VAD on each 512-sample window
-    - Fires off a transcription request in a background thread when an
-      utterance ends (speech followed by SILENCE_DURATION of silence)
-    """
-    # Ring buffer to capture audio just before speech starts
-    pre_speech_buf: collections.deque = collections.deque(maxlen=PRE_SPEECH_CHUNKS)
+# ── Phase 1 + 2: POST alert to gateway ────────────────────────────────────────
 
-    speech_chunks: list  = []
-    in_speech: bool      = False
-    silence_count: int   = 0
-
-    print("🎙  Listening — speak now. Press Ctrl+C to stop.\n")
-
-    while True:
-        chunk = audio_queue.get()  # blocks until a chunk is available
-
-        # Run VAD on this 512-sample window
-        with torch.no_grad():
-            prob = vad_model(torch.from_numpy(chunk), SAMPLE_RATE).item()
-
-        is_speech = prob >= SPEECH_THRESHOLD
-
-        if is_speech:
-            if not in_speech:
-                # Speech just started — prepend the pre-speech padding
-                speech_chunks = list(pre_speech_buf)
-                in_speech = True
-                print("▶  Speech detected...", end="\r")
-            speech_chunks.append(chunk)
-            silence_count = 0
-
-        else:  # silence
-            if in_speech:
-                speech_chunks.append(chunk)
-                silence_count += 1
-
-                if silence_count >= SILENCE_CHUNKS:
-                    # Enough silence — utterance has ended
-                    utterance = np.concatenate(speech_chunks)
-                    duration  = len(utterance) / SAMPLE_RATE
-                    print(f"⏹  Utterance ended ({duration:.1f}s) — sending to API...")
-
-                    # Send in a daemon thread so we don't block VAD
-                    threading.Thread(
-                        target=send_to_api,
-                        args=(utterance,),
-                        daemon=True,
-                    ).start()
-
-                    # Reset state
-                    speech_chunks = []
-                    in_speech     = False
-                    silence_count = 0
-                    pre_speech_buf.clear()
-            else:
-                # No speech — keep filling the pre-speech ring buffer
-                pre_speech_buf.append(chunk)
+def post_alert(audio: np.ndarray, incident_id: str) -> dict:
+    """Send alert audio to gateway, return the response dict."""
+    wav = to_wav_bytes(audio)
+    print("📤  Sending alert to gateway...")
+    resp = requests.post(
+        f"{GATEWAY_URL}/v1/emergency/transcribe",
+        headers={"X-API-Key": API_KEY},
+        files={"file": ("alert.wav", wav, "audio/wav")},
+        data={"incident_id": incident_id, "priority": "high"},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()
 
 
-# ── Entry point ────────────────────────────────────────────────────────────────
-if __name__ == "__main__":
-    print(f"Connecting to API at: {API_URL}")
-    try:
-        r = requests.get(API_URL, timeout=5)
-        print(f"✓ API reachable — {r.json()}\n")
-    except Exception:
-        print("⚠  Could not reach API. Check API_URL and ensure the server is running.\n")
+# ── Phase 3: Live WebSocket call ───────────────────────────────────────────────
 
-    try:
+async def live_call(incident_id: str) -> None:
+    """Connect to gateway WS, stream mic audio, receive transcripts."""
+    ws_url = (
+        GATEWAY_URL
+        .replace("https://", "wss://")
+        .replace("http://", "ws://")
+    ) + f"/ws/emergency/{incident_id}"
+
+    print(f"🔌  Connecting to live call (incident {incident_id[:8]})...")
+
+    async with websockets.connect(
+        ws_url,
+        additional_headers={"X-API-Key": API_KEY},
+        ping_interval=20,
+    ) as ws:
+
+        # ── Receive loop (runs concurrently) ──────────────────────────────────
+        async def receive_loop():
+            try:
+                async for message in ws:
+                    if isinstance(message, str):
+                        try:
+                            msg = json.loads(message)
+                        except Exception:
+                            continue  # ignore malformed frames — don't crash the task
+                        mtype = msg.get("type", "")
+
+                        if mtype == "waiting":
+                            print(f"⏳  {msg['message']}")
+
+                        elif mtype == "accepted":
+                            print(f"\n✅  {msg['message']}")
+                            print("🎙   Speak freely. Press Ctrl+C to hang up.\n")
+
+                        elif mtype == "transcript":
+                            print(f"📝  [You said]: {msg['text']}")
+
+                        elif mtype == "responder_message":
+                            print(f"💬  [Responder]: {msg['text']}")
+
+                        elif mtype == "responder_disconnected":
+                            print(f"\n🔴  {msg['message']}")
+
+                        elif mtype == "timeout":
+                            print(f"\n⚠️   {msg['message']}")
+                            return
+
+                    elif isinstance(message, bytes) and len(message) > 0:
+                        # Responder audio — play through speakers
+                        try:
+                            audio_chunk = np.frombuffer(message, dtype=np.float32)
+                            sd.play(audio_chunk, samplerate=SAMPLE_RATE, blocking=False)
+                        except Exception:
+                            pass
+            except websockets.ConnectionClosed:
+                pass
+
+        # ── Mic send loop ─────────────────────────────────────────────────────
+        audio_queue: asyncio.Queue = asyncio.Queue()
+
+        def mic_callback(indata: np.ndarray, frames: int, time, status):
+            chunk = indata[:, 0].copy().astype(np.float32)
+            # Gate: discard silent chunks to avoid padding ASR buffer with silence
+            if SILENCE_THRESHOLD > 0.0 and float(np.sqrt(np.mean(chunk ** 2))) < SILENCE_THRESHOLD:
+                return
+            audio_queue.put_nowait(chunk)
+
+        recv_task = asyncio.create_task(receive_loop())
+
         with sd.InputStream(
             samplerate=SAMPLE_RATE,
             channels=1,
             dtype="float32",
             blocksize=CHUNK_SAMPLES,
-            callback=audio_callback,
+            callback=mic_callback,
         ):
-            process_audio()
+            try:
+                while not recv_task.done():
+                    try:
+                        chunk = await asyncio.wait_for(audio_queue.get(), timeout=1.0)
+                        await ws.send(chunk.tobytes())
+                    except asyncio.TimeoutError:
+                        continue  # silence gap — keep looping, don't close WS
+            except asyncio.CancelledError:
+                pass
+            except KeyboardInterrupt:
+                print("\n📵  Hanging up...")
+            finally:
+                recv_task.cancel()
+                await ws.close()
+
+
+# ── Entry point ────────────────────────────────────────────────────────────────
+
+def main():
+    print(f"\n🚨  PAB Emergency Client")
+    print(f"    Gateway : {GATEWAY_URL}")
+    print(f"\nPress ENTER to trigger an emergency alert (records {ALERT_DURATION}s).")
+    print("Press Ctrl+C to quit.\n")
+
+    try:
+        while True:
+            input()   # wait for button press (Enter)
+
+            incident_id = str(uuid.uuid4())
+            print(f"\n─── Incident {incident_id[:8]} ─────────────────────────────────────")
+
+            # Phase 1: record alert
+            audio = record_alert()
+
+            # Phase 2: POST to gateway → ASR → responder notified
+            try:
+                result = post_alert(audio, incident_id)
+                print(f"🗣   Transcript : {result.get('transcription', '(none)')}")
+                print(f"📡   Delivery   : {result.get('responder_delivery', '?')}")
+            except requests.RequestException as exc:
+                print(f"❌  Alert failed: {exc}")
+                continue
+
+            # Use the event_id returned by the gateway (room is stored under this key)
+            gateway_event_id = result.get("event_id", incident_id)
+
+            # Phase 3: open WebSocket, wait for responder, go live
+            try:
+                asyncio.run(live_call(gateway_event_id))
+            except KeyboardInterrupt:
+                pass
+
+            print(f"\n─── Call ended. Press ENTER for a new alert. ──────────────────\n")
+
     except KeyboardInterrupt:
         print("\nStopped.")
-    except sd.PortAudioError as e:
-        print(f"\n[Microphone error]: {e}")
-        print("Run `python -m sounddevice` to list available devices.")
+
+
+if __name__ == "__main__":
+    main()
+
